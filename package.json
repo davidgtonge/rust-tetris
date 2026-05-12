@@ -1,0 +1,20 @@
+{
+  "name": "rust-tetris",
+  "version": "0.1.0",
+  "description": "Tetris with Rust/Wasm engine, CBOR worker wire, and view-model patches",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "preact": "^10.27.2"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.2",
+    "typescript": "^6.0.3",
+    "vite": "^6.3.5"
+  }
+}

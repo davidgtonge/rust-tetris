@@ -1,0 +1,7 @@
+node_modules/
+dist/
+pkg/
+.vite/
+tsconfig.tsbuildinfo
+.DS_Store
+rust/tetris-engine/target/
