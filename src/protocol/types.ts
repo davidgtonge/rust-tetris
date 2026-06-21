@@ -5,7 +5,6 @@
 export type {
   AppEvent,
   EffectCommand,
-  EffectResult,
   PatchSegment,
   ViewModel,
   ViewModelPatch,

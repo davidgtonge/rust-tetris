@@ -57,12 +57,15 @@ pub struct AppState {
     pub block: Block,
     pub paused: bool,
     pub gameover: bool,
-    /// Waiting for a random-int effect before spawning the next piece.
-    pub awaiting_shape: bool,
+    pub(crate) rng: u32,
 }
 
 impl AppState {
     pub fn initial() -> Self {
+        Self::with_seed(1)
+    }
+
+    pub fn with_seed(seed: u32) -> Self {
         Self {
             board: empty_board(),
             counter: 0,
@@ -71,8 +74,23 @@ impl AppState {
             block: empty_block(),
             paused: false,
             gameover: false,
-            awaiting_shape: false,
+            rng: seed.max(1),
         }
+    }
+
+    /// Inclusive upper bound `max`.
+    pub fn next_random(&mut self, max: u32) -> u32 {
+        self.rng = self.rng
+            .wrapping_mul(1_664_525)
+            .wrapping_add(1_013_904_223);
+        if max == 0 {
+            return 0;
+        }
+        self.rng % (max + 1)
+    }
+
+    pub fn reset_game(&self) -> Self {
+        Self::with_seed(self.rng)
     }
 }
 

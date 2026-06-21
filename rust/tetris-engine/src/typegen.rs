@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use ts_rs::TS;
 
-use crate::effect::{EffectCommand, EffectResult};
+use crate::effect::EffectCommand;
 use crate::event::AppEvent;
 use engine_kernel::{PatchSegment, ViewModelPatch};
 use crate::protocol::{WorkerInput, WorkerOutput};
@@ -20,7 +20,6 @@ pub fn export_types() -> io::Result<()> {
     let path = dir.join("engine-types.ts");
 
     let mut out = String::from(GENERATED_HEADER);
-    append_decl::<EffectResult>(&mut out);
     append_decl::<PatchSegment>(&mut out);
     append_decl::<ViewModelPatch>(&mut out);
     append_decl::<AppEvent>(&mut out);

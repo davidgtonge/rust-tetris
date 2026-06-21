@@ -1,4 +1,3 @@
-use crate::effect::EffectResult;
 use serde::{Deserialize, Serialize};
 
 #[cfg_attr(feature = "typegen", derive(ts_rs::TS))]
@@ -17,9 +16,4 @@ pub enum AppEvent {
     Pause,
     Resume,
     Restart,
-    EffectCompleted {
-        #[serde(rename = "effectId")]
-        effect_id: String,
-        result: EffectResult,
-    },
 }

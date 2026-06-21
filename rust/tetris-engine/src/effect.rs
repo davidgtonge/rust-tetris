@@ -8,11 +8,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum EffectCommand {
-    RandomInt {
-        id: String,
-        min: u32,
-        max: u32,
-    },
     TimerStart {
         id: String,
         #[serde(rename = "intervalMs")]
@@ -21,15 +16,4 @@ pub enum EffectCommand {
     TimerStop {
         id: String,
     },
-}
-
-#[cfg_attr(feature = "typegen", derive(ts_rs::TS))]
-#[cfg_attr(
-    feature = "typegen",
-    ts(tag = "type", rename_all = "camelCase")
-)]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum EffectResult {
-    RandomInt { value: u32 },
 }

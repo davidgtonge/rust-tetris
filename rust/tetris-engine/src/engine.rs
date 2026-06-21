@@ -2,7 +2,7 @@ use engine_kernel::diff_serializable_checked;
 use crate::effect::EffectCommand;
 use crate::protocol::{WorkerInput, WorkerOutput};
 use crate::state::AppState;
-use crate::update::{reduce, request_next_shape};
+use crate::update::{add_block, reduce};
 use crate::view_model::{select_view_model, ViewModel};
 
 const TICK_INTERVAL_MS: u32 = 16;
@@ -27,14 +27,12 @@ impl Engine {
 
     pub fn dispatch(&mut self, input: &WorkerInput) -> WorkerOutput {
         match input {
-            WorkerInput::Init { seed: _ } => {
-                self.state = AppState::initial();
-                let mut effects = startup_effects();
-                effects.extend(request_next_shape(&mut self.state).effects);
+            WorkerInput::Init { seed } => {
+                self.state = add_block(AppState::with_seed(*seed));
                 self.view_model = select_view_model(&self.state);
                 WorkerOutput::Initialized {
                     view_model: self.view_model.clone(),
-                    effects,
+                    effects: startup_effects(),
                 }
             }
             WorkerInput::Event { event } => {
@@ -93,6 +91,18 @@ mod tests {
         let decoded = decode_output(&bytes).unwrap();
         match decoded {
             WorkerOutput::Response { .. } => {}
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn init_spawns_block() {
+        let mut engine = Engine::new();
+        let out = engine.dispatch(&WorkerInput::Init { seed: 99 });
+        match out {
+            WorkerOutput::Initialized { view_model, .. } => {
+                assert!(view_model.rows.iter().flatten().any(|c| !c.is_empty()));
+            }
             other => panic!("unexpected {other:?}"),
         }
     }

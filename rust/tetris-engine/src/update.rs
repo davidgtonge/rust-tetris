@@ -1,3 +1,4 @@
+use crate::board::{highlighted_row, is_row_full, map_rows, merge_board_and_block};
 use crate::effect::EffectCommand;
 use crate::event::AppEvent;
 use crate::shapes::{block_from_index, shape_count};
@@ -10,126 +11,163 @@ pub struct Transition {
     pub effects: Vec<EffectCommand>,
 }
 
-pub fn reduce(state: &mut AppState, event: &AppEvent) -> Transition {
-    match event {
-        AppEvent::MoveLeft => {
-            guard_move(state, |b| b.x -= 1);
-            Transition { effects: vec![] }
-        }
-        AppEvent::MoveRight => {
-            guard_move(state, |b| b.x += 1);
-            Transition { effects: vec![] }
-        }
-        AppEvent::MoveDown => {
-            guard_move(state, |b| b.y += 1);
-            Transition { effects: vec![] }
-        }
-        AppEvent::Rotate => {
-            guard_move(state, rotate_block);
-            Transition { effects: vec![] }
-        }
-        AppEvent::Pause => {
-            state.paused = true;
-            Transition { effects: vec![] }
-        }
-        AppEvent::Resume => {
-            state.paused = false;
-            Transition { effects: vec![] }
-        }
-        AppEvent::Restart => {
-            *state = AppState::initial();
-            request_next_shape(state)
-        }
-        AppEvent::Tick => tick_pipeline(state),
-        AppEvent::EffectCompleted { effect_id, result } => {
-            handle_effect_result(state, effect_id, result)
-        }
-    }
-}
-
-fn tick_pipeline(state: &mut AppState) -> Transition {
-    if state.paused || state.gameover {
-        return Transition { effects: vec![] };
-    }
-
-    state.counter += 1;
-    let mut effects = Vec::new();
-
-    if state.counter.is_multiple_of(state.gamespeed) {
-        if !state.block.is_empty() {
-            move_blocks(state);
-        }
-        clear_rows(state);
-        mark_rows(state);
-        if state.block.is_empty() && !state.awaiting_shape {
-            effects.extend(request_next_shape(state).effects);
-        }
-        if !state.gameover {
-            state.score += 1;
-        }
-    }
-
-    Transition { effects }
-}
-
-fn handle_effect_result(
-    state: &mut AppState,
-    effect_id: &str,
-    result: &crate::effect::EffectResult,
-) -> Transition {
-    if effect_id != "spawn-shape" {
-        return Transition { effects: vec![] };
-    }
-    let crate::effect::EffectResult::RandomInt { value } = result;
-    state.block = block_from_index(*value as usize, None, 0);
-    state.awaiting_shape = false;
+fn idle() -> Transition {
     Transition { effects: vec![] }
 }
 
-pub fn request_next_shape(state: &mut AppState) -> Transition {
-    if state.awaiting_shape {
-        return Transition { effects: vec![] };
+pub fn reduce(state: &mut AppState, event: &AppEvent) -> Transition {
+    let current = state.clone();
+    *state = match event {
+        AppEvent::MoveLeft => shift_x(current, -1),
+        AppEvent::MoveRight => shift_x(current, 1),
+        AppEvent::MoveDown => shift_y(current, 1),
+        AppEvent::Rotate => guard_block(current, rotate_block),
+        AppEvent::Pause => AppState { paused: true, ..current },
+        AppEvent::Resume => AppState { paused: false, ..current },
+        AppEvent::Restart => current.reset_game(),
+        AppEvent::Tick => tick_pipeline(current),
+    };
+    idle()
+}
+
+// --- Tick pipeline ------------------------------------------------------------
+
+fn tick_pipeline(state: AppState) -> AppState {
+    if state.paused || state.gameover {
+        return state;
     }
-    state.awaiting_shape = true;
-    Transition {
-        effects: vec![EffectCommand::RandomInt {
-            id: "spawn-shape".to_string(),
-            min: 0,
-            max: shape_count().saturating_sub(1),
-        }],
+
+    state
+        .pipe(increment_counter)
+        .pipe(slow(skip_if_empty_block(move_blocks)))
+        .pipe(slow(clear_rows))
+        .pipe(slow(mark_rows))
+        .pipe(slow(run_if_empty_block(add_block)))
+        .pipe(slow(when(|s| !s.gameover, increment_score)))
+}
+
+trait Pipe: Sized {
+    fn pipe(self, step: impl FnOnce(Self) -> Self) -> Self;
+}
+
+impl Pipe for AppState {
+    fn pipe(self, step: impl FnOnce(Self) -> Self) -> Self {
+        step(self)
     }
 }
 
-fn guard_move(state: &mut AppState, mutate: impl FnOnce(&mut Block)) {
+// --- Combinators --------------------------------------------------------------
+
+fn slow(step: impl Fn(AppState) -> AppState) -> impl Fn(AppState) -> AppState {
+    move |state| {
+        if on_slow_tick(&state) {
+            step(state)
+        } else {
+            state
+        }
+    }
+}
+
+fn skip_if_empty_block(
+    step: impl Fn(AppState) -> AppState,
+) -> impl Fn(AppState) -> AppState {
+    move |state| {
+        if state.block.is_empty() {
+            state
+        } else {
+            step(state)
+        }
+    }
+}
+
+fn run_if_empty_block(step: impl Fn(AppState) -> AppState) -> impl Fn(AppState) -> AppState {
+    move |state| {
+        if state.block.is_empty() {
+            step(state)
+        } else {
+            state
+        }
+    }
+}
+
+fn when(
+    pred: fn(&AppState) -> bool,
+    step: impl Fn(AppState) -> AppState,
+) -> impl Fn(AppState) -> AppState {
+    move |state| {
+        if pred(&state) {
+            step(state)
+        } else {
+            state
+        }
+    }
+}
+
+fn guard_block(state: AppState, mutate: impl FnOnce(Block) -> Block) -> AppState {
     if state.paused || state.gameover || state.block.is_empty() {
-        return;
+        return state;
     }
-    let mut trial = state.block.clone();
-    mutate(&mut trial);
+    let trial = mutate(state.block.clone());
     if is_valid(&state.board, &trial) {
-        state.block = trial;
+        AppState { block: trial, ..state }
+    } else {
+        state
     }
 }
 
-fn move_blocks(state: &mut AppState) {
-    let mut trial = state.block.clone();
-    trial.y += 1;
+fn shift_x(state: AppState, dx: i32) -> AppState {
+    guard_block(state, |b| Block { x: b.x + dx, ..b })
+}
+
+fn shift_y(state: AppState, dy: i32) -> AppState {
+    guard_block(state, |b| Block { y: b.y + dy, ..b })
+}
+
+// --- Steps --------------------------------------------------------------------
+
+fn increment_counter(state: AppState) -> AppState {
+    AppState {
+        counter: state.counter + 1,
+        ..state
+    }
+}
+
+fn on_slow_tick(state: &AppState) -> bool {
+    state.counter.is_multiple_of(state.gamespeed)
+}
+
+pub fn add_block(mut state: AppState) -> AppState {
+    let max = shape_count().saturating_sub(1);
+    let index = state.next_random(max) as usize;
+    state.block = block_from_index(index, None, 0);
+    state
+}
+
+fn move_blocks(state: AppState) -> AppState {
+    let trial = Block {
+        y: state.block.y + 1,
+        ..state.block.clone()
+    };
     if is_valid(&state.board, &trial) {
-        state.block = trial;
-        return;
+        return AppState { block: trial, ..state };
     }
 
     if state.block.y == 0 {
-        state.paused = true;
-        state.gameover = true;
-        return;
+        return AppState {
+            paused: true,
+            gameover: true,
+            ..state
+        };
     }
 
-    state.board = merge_board_and_block(state);
-    state.block = empty_block();
+    AppState {
+        board: merge_board_and_block(&state),
+        block: empty_block(),
+        ..state
+    }
 }
 
-fn clear_rows(state: &mut AppState) {
+fn clear_rows(state: AppState) -> AppState {
     let rows: Vec<_> = state
         .board
         .chunks(BOARD_WIDTH)
@@ -141,49 +179,42 @@ fn clear_rows(state: &mut AppState) {
         .collect();
     let removed = BOARD_HEIGHT - cleared.len();
     if removed == 0 {
-        return;
+        return state;
     }
     let mut flat: Vec<String> = cleared.into_iter().flatten().collect();
     flat.splice(
         0..0,
         (0..removed * BOARD_WIDTH).map(|_| String::new()),
     );
-    state.board = flat;
     let removed_u32 = u32::try_from(removed).expect("removed rows fit u32");
-    state.score += 25u32.pow(removed_u32);
+    AppState {
+        board: flat,
+        score: state.score + 25u32.pow(removed_u32),
+        ..state
+    }
 }
 
-fn mark_rows(state: &mut AppState) {
-    let rows: Vec<_> = state
-        .board
-        .chunks(BOARD_WIDTH)
-        .map(|row| {
-            if row.iter().all(|c| !c.is_empty() && c != HIGHLIGHT_COLOUR) {
-                vec![HIGHLIGHT_COLOUR.to_string(); BOARD_WIDTH]
+fn mark_rows(state: AppState) -> AppState {
+    AppState {
+        board: map_rows(&state.board, |row| {
+            if is_row_full(row) {
+                highlighted_row()
             } else {
                 row.to_vec()
             }
-        })
-        .collect();
-    state.board = rows.into_iter().flatten().collect();
+        }),
+        ..state
+    }
 }
 
-fn merge_board_and_block(state: &AppState) -> Vec<String> {
-    let mut board = state.board.clone();
-    let block = &state.block;
-    let size = block.matrix_side();
-    for cell in &block.shape {
-        if cell.val == 0 {
-            continue;
-        }
-        let row = block.y + i32::try_from(cell.idx / size).expect("row offset fits i32");
-        let col = block.x + i32::try_from(cell.idx % size).expect("col offset fits i32");
-        if let Some(idx) = cell_index(row, col) {
-            board[idx].clone_from(&block.color);
-        }
+fn increment_score(state: AppState) -> AppState {
+    AppState {
+        score: state.score + 1,
+        ..state
     }
-    board
 }
+
+// --- Block geometry -----------------------------------------------------------
 
 fn is_valid(board: &[String], block: &Block) -> bool {
     if block.is_empty() {
@@ -215,27 +246,29 @@ fn is_valid(board: &[String], block: &Block) -> bool {
     true
 }
 
-fn rotate_block(block: &mut Block) {
+fn rotate_block(block: Block) -> Block {
     let size = block.matrix_side();
-    block.shape = block
-        .shape
-        .iter()
-        .map(|cell| {
-            let row = cell.idx / size;
-            let col = cell.idx % size;
-            let new_idx = size - 1 - row + col * size;
-            ShapeCell {
-                val: cell.val,
-                idx: new_idx,
-            }
-        })
-        .collect();
+    Block {
+        shape: block
+            .shape
+            .iter()
+            .map(|cell| {
+                let row = cell.idx / size;
+                let col = cell.idx % size;
+                let new_idx = size - 1 - row + col * size;
+                ShapeCell {
+                    val: cell.val,
+                    idx: new_idx,
+                }
+            })
+            .collect(),
+        ..block
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effect::EffectResult;
 
     #[test]
     fn restart_resets_score() {
@@ -255,17 +288,8 @@ mod tests {
     }
 
     #[test]
-    fn spawn_effect_applies_block() {
-        let mut state = AppState::initial();
-        state.awaiting_shape = true;
-        reduce(
-            &mut state,
-            &AppEvent::EffectCompleted {
-                effect_id: "spawn-shape".to_string(),
-                result: EffectResult::RandomInt { value: 2 },
-            },
-        );
+    fn add_block_spawns_piece() {
+        let state = add_block(AppState::with_seed(42));
         assert!(!state.block.is_empty());
-        assert!(!state.awaiting_shape);
     }
 }

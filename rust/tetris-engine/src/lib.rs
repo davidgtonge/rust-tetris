@@ -1,3 +1,4 @@
+mod board;
 mod effect;
 mod engine;
 mod event;
@@ -13,7 +14,7 @@ mod typegen;
 #[cfg(feature = "typegen")]
 pub use typegen::export_types;
 
-pub use effect::{EffectCommand, EffectResult};
+pub use effect::EffectCommand;
 pub use engine::Engine;
 pub use event::AppEvent;
 pub use engine_kernel::ViewModelPatch;
